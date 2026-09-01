@@ -1,0 +1,23 @@
+# for py38
+torch==1.9.0             
+torchvision==0.10.0
+opencv-python==4.12.0.88  
+opencv-python-headless
+tqdm
+pandas
+pyyaml
+spikingjelly
+
+psutil
+matplotlib   
+seaborn
+gitpython
+requests==2.23.0
+pillow==9.5.0
+
+# for onnx
+onnx 
+onnxruntime 
+onnxslim
+
+# ipython   # need uninstall 

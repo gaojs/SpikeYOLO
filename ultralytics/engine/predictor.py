@@ -43,6 +43,18 @@ from ultralytics.utils.checks import check_imgsz, check_imshow
 from ultralytics.utils.files import increment_path
 from ultralytics.utils.torch_utils import select_device, smart_inference_mode
 
+import zz_conf; is_use_sdk = zz_conf.is_use_sdk    # 是否用sdk推理 --------------------  
+# is_use_sdk = False  # for test
+if is_use_sdk:   
+    lynxi_model = "model_spikeyolov8_640_1220/Net_0/"       # 编译生成物路径 
+    # import lyngor as lyn; lyn_model = lyn.load(lynxi_model)   # for x86
+    import lynpy; lyn_model = lynpy.Model(path=lynxi_model)     # for all
+
+    def compare_result(apu_x, torch_y, flag):
+        ret  = np.sqrt( np.sum( (np.float32(apu_x)-np.float32(torch_y))**2)) / np.sqrt( np.sum( np.float32(apu_x)**2 ))
+        print(f'[compare_result][{flag}] the error rate of apu_x and torch_y is: {ret}', '\n', '---'*30)
+
+
 STREAM_WARNING = """
 WARNING ⚠️ inference results will accumulate in RAM unless `stream=True` is passed, causing potential out-of-memory
 errors for large sources or long-running streams and videos. See https://docs.ultralytics.com/modes/predict/ for help.
@@ -122,6 +134,10 @@ class BasePredictor:
             im = np.ascontiguousarray(im)  # contiguous
             im = torch.from_numpy(im)
 
+        if is_use_sdk:                     # lynxi model input
+            global input_data
+            input_data = im.detach().clone().numpy().transpose(0,2,3,1).astype("uint8")
+
         im = im.to(self.device)
         im = im.half() if self.model.fp16 else im.float()  # uint8 to fp16/32
         if not_tensor:
@@ -132,7 +148,22 @@ class BasePredictor:
         """Runs inference on a given image using the specified model and arguments."""
         visualize = increment_path(self.save_dir / Path(self.batch[0][0]).stem,
                                    mkdir=True) if self.args.visualize and (not self.source_type.tensor) else False
-        return self.model(im, augment=self.args.augment, visualize=visualize)
+        # return self.model(im, augment=self.args.augment, visualize=visualize)
+        res = self.model(im, augment=self.args.augment, visualize=visualize)
+        # with open("mdoel_spikeyolo.txt", "w") as f: f.write(str(self.model))
+        # print("--infer--", res, res.shape)
+        if is_use_sdk:
+            # lyn_model.run(images=np.ascontiguousarray(input_data))             # for x86
+            # apu = lyn_model.get_output()[0]
+            lyn_input = lyn_model.input_tensor().from_numpy(input_data).apu()   # for all
+            lyn_model(lyn_input)
+            apu = lyn_model.output_list()[0][0].cpu().numpy()
+
+            apu = apu.transpose(0,2,1)  
+            # print("--apu--", apu, apu.shape)
+            compare_result(apu, res, "test_sdk")   # 对比apu和pytorch模型的误差率
+            res = torch.from_numpy(apu).float()    # 用apu结果替换      
+        return res 
 
     def pre_transform(self, im):
         """
@@ -144,7 +175,8 @@ class BasePredictor:
         Returns:
             (list): A list of transformed images.
         """
-        same_shapes = all(x.shape == im[0].shape for x in im)
+        # same_shapes = all(x.shape == im[0].shape for x in im)
+        same_shapes = False       # lynxi
         letterbox = LetterBox(self.imgsz, auto=same_shapes and self.model.pt, stride=self.model.stride)
         return [letterbox(image=x) for x in im]
 
