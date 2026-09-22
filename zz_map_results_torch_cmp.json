@@ -1,0 +1,35 @@
+{
+  "dataset": "/home/hill/lynxi/data/coco128",
+  "images": 128,
+  "imgsz": 320,
+  "conf": 0.001,
+  "iou_nms": 0.7,
+  "results": {
+    "apu": {
+      "mAP50": 0.7271287366615365,
+      "mAP50_95": 0.5546856430125436,
+      "pr_conf": 0.25,
+      "precision": 0.6375838926131706,
+      "recall": 0.4545454545432797,
+      "tp": 95,
+      "fp": 54,
+      "fn": 114,
+      "classes_with_gt": 43,
+      "elapsed_s": 10.3,
+      "images": 32
+    },
+    "torch": {
+      "mAP50": 0.7160218000629733,
+      "mAP50_95": 0.5499189148202177,
+      "pr_conf": 0.25,
+      "precision": 0.6369863013655002,
+      "recall": 0.4449760765528949,
+      "tp": 93,
+      "fp": 53,
+      "fn": 116,
+      "classes_with_gt": 43,
+      "elapsed_s": 423.1,
+      "images": 32
+    }
+  }
+}

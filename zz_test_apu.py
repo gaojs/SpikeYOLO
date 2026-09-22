@@ -3,7 +3,7 @@
 SpikeYOLO HP300/KA200 APU 功能与性能验证脚本
 - 功能：APU 输出与 PyTorch golden 输出逐元素相对误差 + NMS 检测框对比
 - 性能：APU 端到端推理延迟 / FPS（含 H2D 搬运与 D2H 拷贝）
-- 能耗：容器内无功耗采集接口（SDK 无 power/temp API，无 sysfs），仅记录可获项
+- 能耗：通过 lynxi-smi 板卡级 Power Usage 低频采样，给出空闲/推理功耗与每帧能耗粗估
 用法：
     /home/hill/lynxi/venv/bin/python zz_test_apu.py \
         --model-dir model_spikeyolov8_320_c16/Net_0 --imgsz 320 --runs 50
@@ -131,6 +131,80 @@ def perf_check(lyn_model, image, runs=50, imgsz=320):
     print("==========================================")
 
 
+SMI_PATH = "/usr/bin/lynxi-smi"
+
+
+def sample_power_w():
+    """从 lynxi-smi 读取板卡级 Power Usage（W）；读取失败返回 None。"""
+    import re
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [SMI_PATH], capture_output=True, text=True, timeout=10
+        ).stdout
+    except Exception:
+        return None
+    m = re.search(r"Power\(Usage/Cap\):\s*([0-9.]+)W", out)
+    return float(m.group(1)) if m else None
+
+
+def energy_check(
+    lyn_model,
+    image,
+    imgsz=320,
+    idle_seconds=5.0,
+    load_seconds=15.0,
+    power_interval=1.0,
+):
+    """能耗验证：lynxi-smi 低频采样空闲/推理期功耗，估算每帧能耗。
+
+    口径说明：lynxi-smi 为板卡级低频点采样，非积分测量；每帧能耗按
+    「推理窗口内平均功耗 × 窗口时长 / 实际完成帧数」计算。采样开销会降低
+    窗口内帧数，但功耗与帧数同窗口统计，故每帧能耗仍成立。
+    """
+    print("\n================ 能耗验证 ================")
+    if sample_power_w() is None:
+        print(f"  {SMI_PATH} 未返回功耗字段，无法实测")
+        return
+
+    idle = []
+    t_end = time.time() + idle_seconds
+    while time.time() < t_end:
+        v = sample_power_w()
+        if v is not None:
+            idle.append(v)
+        time.sleep(power_interval)
+    idle_avg = float(np.mean(idle)) if idle else float("nan")
+
+    _, _, input_data = preprocess(image, imgsz)
+    for _ in range(5):  # warmup
+        apu_infer(lyn_model, input_data)
+
+    load = []
+    frames = 0
+    t0 = time.time()
+    t_end = t0 + load_seconds
+    while time.time() < t_end:
+        apu_infer(lyn_model, input_data)
+        frames += 1
+        v = sample_power_w()
+        if v is not None:
+            load.append(v)
+    dur = time.time() - t0
+    load_avg = float(np.mean(load)) if load else float("nan")
+
+    print(f"  采集方式        : {SMI_PATH} 板卡级 Power Usage，间隔 {power_interval}s 点采样")
+    print(f"  空闲功耗        : {idle_avg:.2f} W（{len(idle)} 个采样点 / {idle_seconds:.0f}s）")
+    print(f"  推理功耗        : {load_avg:.2f} W（{len(load)} 个采样点 / {dur:.2f}s）")
+    print(f"  功耗增量        : {load_avg - idle_avg:+.2f} W")
+    print(f"  窗口内帧数      : {frames} 帧（{frames / dur:.2f} FPS）")
+    print(f"  每帧能耗(整板)  : {load_avg * dur / frames * 1000:.2f} mJ/frame")
+    print(f"  每帧能耗(净增)  : {(load_avg - idle_avg) * dur / frames * 1000:.2f} mJ/frame")
+    print("  说明：低频点采样、非积分测量，仅用于量级参考；净增值受采样噪声影响。")
+    print("==========================================")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", default="model_spikeyolov8_320_c16/Net_0")
@@ -138,18 +212,23 @@ def main():
     ap.add_argument("--imgsz", type=int, default=320)
     ap.add_argument("--runs", type=int, default=50)
     ap.add_argument("--skip-functional", action="store_true")
+    ap.add_argument("--skip-energy", action="store_true")
+    ap.add_argument("--energy-only", action="store_true")
+    ap.add_argument("--load-seconds", type=float, default=15.0)
     args = ap.parse_args()
 
     print(f"加载 APU 模型: {args.model_dir}")
     lyn_model = build_apu_model(args.model_dir)
     print("模型加载成功")
 
-    if not args.skip_functional:
+    if not args.skip_functional and not args.energy_only:
         functional_check(lyn_model, args.images, imgsz=args.imgsz)
-    perf_check(lyn_model, args.images[0], runs=args.runs, imgsz=args.imgsz)
-
-    print("\n能耗评估：pylynchipsdk 1.25.0 未提供功耗/温度查询接口，容器内也无设备 sysfs，")
-    print("无法实测功耗；可参考编译产物 profiler 目录中的周期统计估算 APU 利用率。")
+    if not args.energy_only:
+        perf_check(lyn_model, args.images[0], runs=args.runs, imgsz=args.imgsz)
+    if not args.skip_energy:
+        energy_check(
+            lyn_model, args.images[0], imgsz=args.imgsz, load_seconds=args.load_seconds
+        )
 
 
 if __name__ == "__main__":

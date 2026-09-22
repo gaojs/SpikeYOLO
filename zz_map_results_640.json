@@ -1,0 +1,22 @@
+{
+  "dataset": "/home/hill/lynxi/data/coco128",
+  "images": 128,
+  "imgsz": 640,
+  "conf": 0.001,
+  "iou_nms": 0.7,
+  "results": {
+    "apu": {
+      "mAP50": 0.7193470278484984,
+      "mAP50_95": 0.5589937766723462,
+      "pr_conf": 0.25,
+      "precision": 0.7269326683282706,
+      "recall": 0.6275565123782265,
+      "tp": 583,
+      "fp": 219,
+      "fn": 346,
+      "classes_with_gt": 71,
+      "elapsed_s": 81.7,
+      "images": 128
+    }
+  }
+}
